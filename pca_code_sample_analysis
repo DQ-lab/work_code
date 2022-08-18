@@ -1,0 +1,198 @@
+# Import pandas and numpy for data management.
+import numpy as np
+import pandas as pd
+
+# Import library functions that will be required for the PCA modelling.
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+
+# For uploading files to Colab.
+from google.colab import files
+
+# For calculating correlation between the ABS index and the recreated index.
+from scipy.stats import pearsonr
+
+# Define a function to obtain the explained variances from the PCA features.
+def plot_explained_variances(pca):
+
+    exp_var_pca = pca.explained_variance_ratio_
+
+    # Calculate the cumulative sum of variances explained.
+    # This will be used to create a scree plot for visualising the variance
+    # explained by each principal component.
+
+    cum_sum_var = np.cumsum(exp_var_pca)
+    
+    # Create the plot
+    plt.bar(range(1,len(exp_var_pca)+1), exp_var_pca, alpha=0.5, align='center',
+            label='Individual explained variance',color='dodgerblue')
+    plt.ylabel('Explained variance ratio')
+    plt.xlabel('Principal component')
+    plt.legend(loc='best')
+    plt.tight_layout()
+    plt.show()
+    
+    # Mount your Google Drive.
+
+# If you are using the suggested method of uploading directly from Google
+# Drive, you first need to run the code below to mount your Google Drive
+# folder to Colab so that it can be accessed in Colab.
+from google.colab import drive
+drive.mount('/content/gdrive/',force_remount=True)
+  # After running this code, you should follow the steps shown in the
+  # output box below:
+  #    1. click on the link to Google Drive;
+  #    2. login to Google Drive;
+  #    3. copy the authorization code provided;
+  #    4. paste the authorization code into the box below.
+  
+  
+  
+  
+# Specify the Google Drive folder that your datasets are saved in.
+infolder = '/content/gdrive/My Drive/DAA datasets/'
+
+# Import the data files for the case study.
+# The first data set ('file1' below) contains the features to be used in the 
+# modelling for each SA1.
+# The second data set ('file2' below) contains the ABS's reported
+# IRSD index value for each SA1 which will be used later for comparison to
+# the index derived in this notebook.
+
+# Specify the filenames from your Google Drive.
+file1 = 'DAA_M06_CS1_data1.csv'
+file2 = 'DAA_M06_CS1_data2.xls'
+
+# Read in the data from your Google Drive folder.
+data1 = pd.read_csv(infolder+file1)
+data2 = pd.read_excel(infolder+file2, sheet_name='Table 1', header = 5,
+                      usecols='A:C',
+                      names = ['SA1_7DIGITCODE_2016', 'SA1_11DIGITCODE_2016', 'IRSD_ABS'])
+                      
+
+
+# Drop the first column of dataset 1 for the purposes of the PCA analysis.
+pca_data = data1.iloc[:,1:]
+
+# Scale the features in dataset 1.
+sc = StandardScaler()
+sc.fit(pca_data)
+pca_data = sc.transform(pca_data)
+
+print(data1[0:5])
+print(pca_data[0:5])
+
+
+
+    
+# Remove the second column ('SA1_11DIGITCODE_2016') of dataset 2
+# as this is not needed in the analysis.
+# Also, the last row in the dataset is a blank row, so this will also be
+# removed.
+ABS_IRSD_S1 = data2.iloc[:-2,[0,2]]
+
+# Convert the ABS_IRSD features to be numeric.
+ABS_IRSD_S1['IRSD_ABS'] = pd.to_numeric(ABS_IRSD_S1['IRSD_ABS'],
+                                        errors='coerce')
+ABS_IRSD_S1['SA1_7DIGITCODE_2016'] = pd.to_numeric(ABS_IRSD_S1['SA1_7DIGITCODE_2016'],
+                                        errors='coerce', downcast='integer')
+
+
+# Drop any SA1s with missing values in the dataset.
+ABS_IRSD_S1 = ABS_IRSD_S1.dropna()
+
+print(ABS_IRSD_S1.info())
+print(ABS_IRSD_S1.head())
+
+# Initiate the PCA.
+pca = PCA()
+
+# Fit the PCA model to determine the transformed features.
+pca.fit_transform(pca_data)
+
+# Use the 'plot_explained_variances' function defined at the top of the
+# notebook to plot the variance explained by each principal component.
+plot_explained_variances(pca)
+
+
+# Print out the weights from the first principal component.
+print(pca.components_[0])
+
+# Apply the PCA dimensionality reduction on the original dataset.
+# Note that in the step below, all the calculated principal components
+# are multipled by -1, to align with the approach used by the ABS
+# where disadvantage indicators, such as the features used in this
+# case study, are given negative rather than positive weights.
+# This is described further on page 18 of the SEIFA technical paper. 
+
+pca_data_transformed = -1.0*pca.fit_transform(pca_data)
+    
+print(pca_data_transformed[:,0])
+
+
+
+# Merge principal component 1 (PC1) with the original dataset so that
+# each SA1 is matched with its calculated raw IRSD index value.
+pca1 = pd.DataFrame(pca_data_transformed[:,0], columns = ['IRSD_raw'])
+
+IRSD_S1 = pd.concat([data1['SA1_7DIGITCODE_2016'].reset_index(drop=True), pca1]
+                    , axis=1)
+
+# Print the first 5 observations in the new dataset which shows the
+# raw IRSD index value for each SA1.
+print(IRSD_S1.head())
+
+# Rescale the raw IRSD index values to have a mean of 1,000 and a
+# standard deviation of 100.
+IRSD_S1['IRSD_recreated'] = (IRSD_S1['IRSD_raw']/IRSD_S1['IRSD_raw'].std())*100+1000
+
+# Print the first 5 observations to see their scaled IRSD index values.
+print(IRSD_S1.head())
+
+# Plot a histogram to show the distribution of IRSD_scaled index values
+# across all the SA1s.
+IRSD_S1.hist(column='IRSD_recreated', bins=100, color='dodgerblue')
+plt.title('Distribution of recreated IRSD scores')
+plt.xlabel('IRSD score')
+plt.ylabel('Frequency')
+
+plt.show()
+#plt.savefig('DAA_M06_Fig11.jpg')
+
+# Plot a histogram to show the distribution of the ABS IRSD index values
+# across all the SA1s.
+ABS_IRSD_S1.hist(column='IRSD_ABS', bins=100, color='dodgerblue')
+plt.title('Distribution of ABS IRSD scores')
+plt.xlabel('IRSD score')
+plt.ylabel('Frequency')
+
+plt.show()
+
+# Join the two datasets together to compare the IRSD calculated to the ABS
+# published IRSD.
+
+IRSD_join = pd.merge(ABS_IRSD_S1, IRSD_S1, how = 'inner', on = 'SA1_7DIGITCODE_2016')
+
+print(IRSD_join.head())
+
+# Create a scatter plot to see how well the recreated index aligns with the ABS
+# index, even if the individual index values aren't the same for all SA1s.
+plt.scatter('IRSD_recreated', 'IRSD_ABS', data=IRSD_join, color='dodgerblue')
+plt.title('Comparison of recreated and ABS IRSD scores')
+plt.xlabel('Recreated IRSD score')
+plt.ylabel('ABS IRSD score')
+
+plt.show()
+
+#plt.savefig('DAA_M06_Fig12.jpg')
+
+
+# Calculate the correlation between the ABS index and the index calculated
+# in this notebook.
+correlation, _ = pearsonr(IRSD_join['IRSD_recreated'], IRSD_join['IRSD_ABS'])
+print('The correlation between the ABS and recreated index is: '+str(correlation))
+
+
+    
+    
