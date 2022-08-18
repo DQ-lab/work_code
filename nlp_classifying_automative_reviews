@@ -1,0 +1,466 @@
+import json # Json is used to load json files.
+import os # os is used to join paths for windows and unix use.
+import random # For random number generation.
+import time # Useful for timing processes.
+
+from collections import Counter # Counter provides a quick way to add items in a list.
+from collections import defaultdict # Enhanced mapping dictionary that can take a default value.
+import numpy as np # For mathematical operations.
+import matplotlib.pyplot as plt # For plotting.
+
+from nltk.tokenize import word_tokenize
+  # 'word_tokenize' is a tokeniser for natural language.
+  # There are many such options available.
+import nltk
+nltk.download('punkt')
+
+# Sklearn has many useful machine learning packages.
+# The following are used in the notebook.
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn import metrics
+
+# Used to upload a file to Colab.
+from google.colab import files
+
+# Package used in the confusion matrix function.
+import itertools
+
+
+# Define a function to load a json data file.
+def load_json(data_set_name, dir = '', verbose=True):
+    '''
+    This is a function to load the yelp dataset which is stored in json format.
+    Use the optional dir argument if the file is not in the same directory
+    as the notebook.
+    '''
+    if verbose:
+        print('loading', data_set_name, 'data ', end = '')
+        # If the user has set Verbose = True (or omitted this argument),
+        # these lines of code provide a message to the person running the code
+        # that the dataset is being loaded.
+    
+    filename = os.path.join(dir, data_set_name)
+    f = open(filename, encoding='utf8')
+
+    data_set = list()
+    for counter, line in enumerate(f):
+        data_set.append(json.loads(line))
+        
+        if verbose and ((counter % 100000) == 0):
+            print('.', end='')
+            # If the dataset is very big, these lines of code print '.'s to
+            # show that the import step is progressing.
+
+    f.close()
+    
+    if verbose: 
+        print(' {:,} observations have been imported.'.format(len(data_set)))
+        # This statement summarises the number of observations that have been
+        # imported from the dataset.
+    
+    return data_set
+    
+    
+    # Define a function to print the Yelp reviews neatly.
+def print_review(review):
+    for item in ['business_id', 'stars', 'funny', 'review_id', 'date', 'useful',
+                 'user_id', 'cool']:
+        print('{:<12s}: {:}'.format(item, review[item]))
+    print ('text: "', review['text'], '"', sep = '')
+    # The default for print() is to put a space between each argument. 
+    # Here sep='' is used to overrule this.
+    print()
+    
+    return
+    
+    
+    
+# Define a function to select reviews with a certain rating (number of stars).
+def sample_with_rating(review_data, rating, sample_size):
+    select_data = [data_row for data_row in review_data \
+                   if data_row['stars'] == rating]
+    review_sample = random.sample(select_data, sample_size)
+    return review_sample
+    
+
+# Define a function to format the summary of review ratings.
+def print_review_count(review_count):
+    head_format = '{:<7s}  {:>10s} {:>10s}'
+    row_format = '{:<7}  {:>10,} {:>10.1%}'
+    
+    print(head_format.format('Stars', 'Total', 'Percent'))
+    print(head_format.format('-----', '-----', '-------'))
+        
+    total_reviews = sum([count for count in review_count.values()])
+
+    # Add the percent to a dictionary indexed in the same way.
+    review_perc = dict()
+    for rating, review in review_count.items():
+        review_perc[rating] = review/total_reviews
+    
+    for k in range(5, 0, -1):
+        print(row_format.format(('*'*k), review_count[k], review_perc[k]))
+
+    print(head_format.format('','-------','-------'))
+    print(row_format.format('Total', total_reviews, 1))
+    
+    
+# Define a function to print some example reviews based on a user input
+# of 'min', 'max', 'average' etc summary function.
+def print_certain_reviews(data, summ_func, descr):
+    # The 'summ_func' will be 'min', 'max', 'average', 'median' etc.
+    certain_review = summ_func([length for (review, length) in data])
+    reviews = [review for (review, length) in data if length == certain_review]
+    review_count = len(reviews)
+    if review_count == 1:
+        print("Below is the 1 {:s} review of {:,} words:".format(descr, certain_review))
+    else:
+        print("Below are the {:,} {:s} reviews of {:,} words:".format(review_count, descr, certain_review))
+      
+    for review in reviews:
+        print('"',review,'"')
+    print()
+    
+ # Define a function to perform the Bag of Words vectorisation.
+def vectorise_data(data_set, vocab):
+    matrix = []
+    for k, review in enumerate(data_set):
+        if k % 1000 == 0:
+            print('.', end='')
+            # Prints '.' every 1,000 reviews so that you
+            # know the code is still running.
+        token_count = Counter(review['tokens'])
+            # Create a count of all the unique tokens in the review.
+        matrix.append([token_count.get(token, 0) for token in vocab])
+            # The token counts for the review are added to 'matrix'. 
+            # The 'get' function of Counter is used to return a 0
+            # for any tokens in the vocabulary that are not in a review.
+    print()
+    
+    return matrix
+    
+    
+# Define a function to calculate a range of success metrics for a fitted model.
+def return_metrics(y, y_pred):
+    scores = dict()
+    scores['Accuracy'] = metrics.accuracy_score(y, y_pred)
+    scores['F1-score'] = metrics.f1_score(y, y_pred, average='binary', pos_label=True)
+    scores['Precision'] = metrics.precision_score(y, y_pred, pos_label=True)
+    scores['Recall'] = metrics.recall_score(y, y_pred, pos_label=True)   
+    scores['Confusion Matrix'] = metrics.confusion_matrix(y, y_pred)
+
+    return scores
+    
+# Define a function to plot confusion matrices in an easy to visualise format.
+def plot_confusion_matrix(cm, classes,
+                          title='Confusion matrix',
+                          cmap=plt.cm.Blues):
+    '''
+    This function prints and plots a nicely formatted confusion matrix.
+    '''
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, cm[i, j],
+                 horizontalalignment='center',
+                 color='white' if cm[i, j] > thresh else 'black')
+
+    plt.tight_layout()
+    plt.ylabel('True response')
+    plt.xlabel('Predicted response')
+    
+# Define a function to print out the success metrics of a model.
+def print_scores(scores, confused = False):
+    print(('{:^9} '*4).format(*scores.keys()))
+    print(('{:^9.1%} '*4).format(*scores.values()))
+
+    if confused:
+            plot_confusion_matrix(scores['Confusion Matrix'],
+                                   classes = ['Non-complaint', 'Complaint'])
+                                   
+                                   
+
+# Mount your google drive to import the required data
+from google.colab import drive
+drive.mount('/content/gdrive/',force_remount=True)
+
+
+# Specify the Google Drive folder that your datasets are saved in.
+infolder = '/content/gdrive/My Drive/DAA datasets/'
+
+# Specify the name of the dataset to be imported.
+file = 'DAA_M07_CS1_data.json'
+
+# Upload the required YELP file from your Google Drive folder.
+review_data = load_json(file,dir=infolder)
+
+# Alternatively, use the code below to upload the file
+# from your computer. This method is slower than the Google Drive method.
+
+#files.upload()
+  # When prompted, select the DAA_M07_CS1_data.json dataset to upload.
+  # Note that this may take some time to upload as the file is large.
+#review_data = load_json('DAA_M07_CS1_data.json')
+
+
+# Extract the feature names from the data.
+features = {key for review in review_data for key in review.keys()}
+  # The '{}' brackets are used to define a set that contains unique entries.
+print(features)
+
+# The feature names could also be obtained used a for loop per the code below.
+# This is a less efficient way of extracting the information.
+features2 = set() # This creates an empty set.
+for review in review_data:
+    for key in review.keys():
+        features2.add(key)
+print(features2)
+
+# Print a sample of 5 random reviews from the full dataset.
+review_sample = random.sample(review_data, 5)
+  # The 'sample' method in the 'random' package selects, without replacement,
+  # the number of items you want from a list.
+
+for review in review_sample:
+    print_review(review)
+    
+
+    
+# Count the number of reviews in each rating category.
+# This is done using a counter as an efficient method to iterate through items.
+
+review_count = Counter([review['stars'] for review in review_data])
+  # A list constructor is used to produce a list of all the star ratings
+  # and the Counter function is then used to count how many reviews there are
+  # in each star rating group.
+  
+print_review_count(review_count)
+
+
+# Check the length of different reviews.
+# A list constructor is used to produce a list of how long each review is
+# in characters. 
+review_length_characters = [len(review['text']) for review in review_data]
+
+# Print summary statistics for the number of characters in each review.
+print('The longest character length in a review is {:,}.'.format(max(review_length_characters)))
+print('The shortest character length in a review is {:,}.'.format(min(review_length_characters)))
+print('The average character length of reviews is {:.0f}.'.format(np.mean(review_length_characters)))
+print('The median character length of reviews is {:.0f}.'.format(np.median(review_length_characters)))
+print()
+
+# A list constructor is used to produce a list of how long each review is
+# in words.
+review_length_words = [len(review['text'].split()) for review in review_data]
+  # The str.split() function breaks a string by approximate word breaks. 
+
+## Print summary statistics for the number of words in each review.
+print('The longest word length in a review is {:,}.'.format(max(review_length_words)))
+print('The shortest word length in a review is {:,}.'.format(min(review_length_words)))
+print('The average word length of reviews is {:.0f}.'.format(np.mean(review_length_words)))
+print('The median word lenth of reviews is {:.0f}.'.format(np.median(review_length_words)))
+
+
+
+# Print some examples of the shortest and longest reviews.
+review_and_length = [(review['text'],len(review['text'].split())) for review in review_data]
+
+print_certain_reviews(review_and_length, min, 'shortest')
+print_certain_reviews(review_and_length, max, 'longest')
+
+
+# Print the 20 most common words across the whole corpus of complaints.
+word_count = Counter([word for review in review_data for word in review['text'].split()])
+print("{:<6} {:>12}".format("Word", "Count"))
+print("{:<6} {:>12}".format("----", "----------"))
+for word, count in word_count.most_common(20):
+    # 'most_common' is a helpful method that can be applied to Counter.
+    print("{:<6} {:>12,}".format(word, count))
+
+
+t0 = time.time()
+  # This sets the starting time so the time taken
+  # to tokenise can be measured.
+
+# Tokenise the reviews using 'word_tokeniser'.
+for counter, review in enumerate(review_data):
+    if counter % 1000 == 1:
+        print ('.', end='')
+        # This prints a '.' every 1,000 reviews to reassure
+        # you that the code is still running.
+    review['tokens'] = word_tokenize(review['text'])
+        # word_tokenize is an nltk tokeniser.
+        # The set of tokens from each review is added to the review
+        # dictionary under a new dictionary index 'tokens'.
+print()
+
+print("Tokenising took {:.0f} seconds".format(time.time()-t0))
+print()
+
+# Look at five sample sets of tokens across the whole data set.
+review_sample = random.sample(review_data, 5)
+for review in review_sample:
+    print(review['text'])
+    print(review['tokens'], '\n')
+
+
+
+    
+# Convert the tokens for each review to lower case.
+for review in review_data:
+    review['tokens'] = [token.lower() for token in review['tokens']]
+
+# Look at another five sample sets of lower case tokens across the whole data set.
+review_sample = random.sample(review_data, 5)
+for review in review_sample:
+    print(review['text'])
+    print(review['tokens'], '\n')
+    
+    
+train, test = train_test_split(review_data, test_size = 0.5)
+  # The Sklearn package 'train_test_split' is used to automate this step. 
+print(('{:>10s}'*3).format('training', 'test', 'total'))
+print(('{:10,}'*3).format(len(train), len(test), len(review_data)))
+
+
+# Define the response variable as 1 (a complaint) if the number of stars given
+# is 1 or 2. Otherwise define the response as 0 (non complaint).
+train_y = [review['stars']<3 for review in train]
+test_y = [review['stars']<3 for review in test]
+
+# Check the total number of complaints is still the same
+# across the training and test sets.
+print(sum(train_y+test_y))
+print(review_count[1]+review_count[2])
+
+
+# Create the vocabulary 
+vocab_count = Counter([token for review in train for token in review['tokens']])
+print('The vocabulary has {:,} tokens'.format(len(vocab_count)))
+print('Some examples are: ')
+print('{:6s} {:s} '.format('Count', 'Token'))
+for token in random.sample(list(vocab_count), 50):
+    print('{1:6,} {0:s} '.format(token, vocab_count[token]))
+    
+    
+ # Define the minimum count for a token to be retained.
+min_count = 15
+
+# Reduce the size of the vocabulary.
+vocab = {token for token, count in vocab_count.items() if count >= min_count}
+
+print('There are {:,} tokens used {:n} or more times. Some examples are:'.
+      format(len(vocab), min_count))
+for token in random.sample(tuple(vocab), 20):
+    print(token)
+
+
+# Convert the reduced vocab into a dictionary to make it easier to check each column
+# of the matrix later.
+vocab = {token: k for k, token in enumerate(vocab)}
+
+# Vectorise the training and test data.
+train_X = vectorise_data(train, vocab)
+test_X = vectorise_data(test,vocab)
+
+# Create a scaler so that the features in the dataset (the vectorised tokens)
+# can be scaled to have a mean of 0 and a standard deviation of 1.
+# Even though the features in this dataset are all on the same scale already,
+# this step can sometimes help a model converge on an optimal solution
+# faster during the fitting process.
+scaler = StandardScaler()
+train_X_scaled = scaler.fit_transform(train_X)
+test_X_scaled = scaler.fit_transform(test_X)
+
+
+
+
+
+# Specify the model.
+model = LogisticRegression(C = 5, solver = 'sag', verbose=1, max_iter=1000)
+  # This line of code creates a logistic regression model.
+  # 'C' is the inverse of regularisation strength and must be a positive float;
+  # smaller values of C specify stronger regularisation.
+  # solver = 'sag' specifies that the stochastic average gradient descent solver
+  # should be used to optimise the parameters of the model.  
+  # The model can be tuned by selecting different values for C and
+  # also by specifying other parameters for the LogisticRegression module.
+
+# Fit the model.
+model.fit(train_X, train_y)
+  # The training data can be supplied in several formats including
+  # a list of lists (a matrix) for the X data and a list for the y data or
+  # numpy arrays.
+
+# Make predictions using the reviews in the test dataset.
+pred_y = model.predict(test_X)
+
+
+# Use the return_metrics and print_scores functions defined at the top
+# of the notebook to review how well this logistic regression model
+# has predicted complaints and non-complaints.
+scores =  return_metrics(test_y, pred_y)
+print_scores(scores, confused = True)
+
+# Print a ROC curve and calculate the AUC for the model.
+print('The AUC for the model is: ', metrics.roc_auc_score(test_y, pred_y))
+
+# Retrieve the sensitivity (true positive rate) and false positive rate for
+# each threshold value (where the threshold value decides how high the
+# predicted probability of being a complaint has to be before an observation
+# is classified as a complaint.)
+
+false_positive_rate, true_positive_rate, threshold = metrics.roc_curve(test_y, pred_y)
+plt.subplots(1, figsize=(5,5))
+plt.title('Receiver Operating Characteristic - review classifier')
+plt.plot(false_positive_rate, true_positive_rate,color='dodgerblue')
+plt.plot([0, 1], ls="--",color='black')
+plt.ylabel('Sensitivity (True Positive Rate)')
+plt.xlabel('False Positive Rate')
+plt.show()
+
+
+# Retrieve the weights from the model for each token in the vocabulary.
+def print_by_weight(model, vocab, k = 5, verbose = True):
+    mod_coefs = model.coef_
+    
+    # Create a list of vocab words and their weights.
+    token_weight = list()
+    for token, count in vocab.items():
+        token_weight.append((token, mod_coefs[0, count]))
+   
+    # Sort and print the top k items.
+    def print_list(tokens):
+        print('{:20s}  {:>7s}'.format('Word', 'Weight'))
+        print('{:20s}  {:>7s}'.format('----', '------'))
+        for token in tokens:
+            print ('{:20s}  {:7.1f}'.format(*token))
+        print()
+        return
+
+    token_weight.sort(key = lambda x : x[1], reverse = True)
+    complaint_keywords = token_weight[:k]
+    print('Words driving complaints:')
+    print_list(token_weight[:k])
+    
+    token_weight.sort(key = lambda x : x[1])
+    non_complaint_keywords = token_weight[:k]
+    print('Words driving non-complaints:')
+    print_list(token_weight[:k])
+
+    return complaint_keywords, non_complaint_keywords
+
+complaint_keywords, non_complaint_keywords = print_by_weight(model, vocab, 10)
+
+
+
+
+
