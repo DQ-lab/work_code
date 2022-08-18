@@ -1,0 +1,293 @@
+import struct  # This module converts data into bytes.
+import datetime # This is a standard Python module for date types.
+import csv
+import xml.etree.ElementTree as ET
+import pandas as pd
+import json
+
+# Create a dictionary for each data type.
+# Two different formats have been used below to create two
+# rows in the dictionary.
+
+data_row_1 = dict()
+data_row_1['name'] = 'Robert'
+data_row_1['date-of-birth'] = datetime.date(1988, 3, 1)
+data_row_1['gender'] = 'Male'
+
+data_row_2 = {'name': 'Suzanne', 'date-of-birth': datetime.date(1986, 8, 11),
+              'gender': 'Female'}
+
+# The following code creates the list of dictionaries.
+example_data = [data_row_1, data_row_2]
+
+print(example_data)
+
+
+# Create a text file called 'example.txt'.
+file = open('example.txt', 'w') # 'w' means 'writing to file'.
+
+# Add data to the text file.
+for data_row in example_data:
+    nice_sentence = '{0:s} is {2:s} and was born on {1:%B %d, %Y}. '.format(*data_row.values())
+    nice_sentence += '\n' # This adds a new line to the end of each data row.
+    file.write(nice_sentence) 
+file.close()
+
+# Read 'example.txt' back into Python.
+file = open('example.txt', 'r') # 'r' means 'reading from file'.
+
+for line in file:
+    print(line, end = '') 
+
+file.close()
+
+# Read 'example.txt' back into Python using a more efficient approach.
+with open('example.txt', 'r') as file:
+    for line in file:
+        print(line, end ='')
+       
+# Create a binary file called 'example_binary.txt'.
+with open('example_binary.txt', 'wb') as file:  # 'wb' means 'writing to binary file'.
+    for data_row in example_data:
+        nice_sentence = "{0:s} is {2:s} and was born on {1:%B %d, %Y}.".format(*data_row.values())
+        nice_sentence += '\n'
+        # The following converts the string into a binary format.
+        binary_version = nice_sentence.encode()
+        file.write(binary_version)
+
+# Read 'example_binary.txt' back into Python.
+with open('example_binary.txt', 'rb') as file: # 'rb' means 'reading from binary file'.
+    for line in file:
+        print(line.decode('utf8'), end ='')
+        # '.decode('utf8')' decodes each line of the binary file into a string object.
+
+# Create a function that converts a date into binary format.
+def convert_date_to_binary(date):
+    binary = struct.pack('@H',date.year)
+    binary += struct.pack('@B',date.month)
+    binary += struct.pack('@B',date.day)    
+    return binary
+
+# Create a function that converts a string into binary format .
+def convert_str_to_binary(string):
+    # Write the length of each string to the binary file before adding
+    # the string to the binary file.
+    binary = struct.pack('@H', len(string))
+    binary += string.encode()
+    return binary
+
+# Create a binary file called 'example.bin'.
+with open('example.bin', 'wb') as file:
+    for data_row in example_data:
+        file.write(convert_str_to_binary(data_row['name']))
+        file.write(convert_str_to_binary(data_row['gender']))        
+        file.write(convert_date_to_binary(data_row['date-of-birth']))
+ 
+ 
+ # Read the binary file 'example.fin' back into Python.
+example_data_read = list()
+with open('example.bin', 'rb') as file:
+    
+    for i in range(2):
+        # The first two bytes are the length of the feature 'name'.
+        length = struct.unpack('@H', file.read(2))
+        # The length information allows us to read the name.
+        name = file.read(*length).decode()
+
+        # The next two bytes are the length of the feature 'gender'.
+        length = struct.unpack('@H', file.read(2)) 
+        gender = file.read(*length).decode()
+
+        # The remaining 4 bytes are used for the feature 'date'.
+        year = struct.unpack('@H', file.read(2))
+        month = struct.unpack('@B', file.read(1))
+        day = struct.unpack('@B', file.read(1))
+
+        # Now convert everything back to a dictionary.
+        row_entry = {'name': name, 
+                     'date-of-birth': datetime.date(*year, *month, *day),
+                     'gender': gender}
+
+        # Add the dictionary to the list.
+        example_data_read.append(row_entry)
+
+print(example_data_read)
+# The following proves that the output from this code it identical to the original dataset.
+print(example_data_read == example_data)
+
+
+# Create a comma delimited (csv) file called 'example.csv'.
+with open('example.csv', 'w', newline='') as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=example_data[0].keys())
+    writer.writeheader()
+    for row in example_data:
+        writer.writerow(row)
+
+
+
+# Read csv file 'example.csv' back into Python.
+with open('example.csv', 'r', newline='') as csvfile:
+    reader = csv.DictReader(csvfile)
+    example_data_read = list(reader)
+
+# Compare the newly created data to the original data.
+print(example_data_read)
+print(example_data_read==example_data)
+
+
+# Read csv file 'example.csv' back into Python as a non-ordered dictionary
+# and with correct date formats.
+
+# Read csv file 'example.csv' back into Python.
+with open('example.csv', 'r', newline='') as csvfile:
+    reader = csv.DictReader(csvfile)
+    example_data_read = list(reader)
+
+# Convert 'example_data_read' from an ordered dictionary to a regular (non ordered) dictionary.
+example_data_read = [dict(row) for row in example_data_read]
+
+# Convert dates from text to date format.
+for row in example_data_read:
+    row['date-of-birth'] = datetime.datetime.strptime(row['date-of-birth'],'%Y-%m-%d').date()
+
+# Compare the newly created data to the original data.
+print(example_data_read)
+print(example_data_read==example_data)
+
+
+
+# Create an XML file 'example.xml' by printing it manually.
+row_format = "    <{0:s}>{1:s}</{0:s}>"
+with open('example.xml', 'w') as file:
+    print('<child_names>', file=file)
+    # This line prints the tag '<child_names>' to the XML file.
+    for data_row in example_data:
+        print('  <child_name>', file=file)
+        # This line prints the tag '  <child_name>' to the XML file.
+        for key, value in data_row.items():
+            # This checks for dates and converts these to a date format.
+            if isinstance(value, (datetime.datetime, datetime.date)):
+                value = value.isoformat()
+            print(row_format.format(key, value), file=file)
+        print('  </child_name>', file=file)
+    print('</child_names>', file=file)
+
+
+
+# Load 'example.xml' back into Python.
+tree = ET.parse('example.xml') # Reads in the data as a tree.
+root = tree.getroot() # Gets the first part of the tree.
+
+print(root.tag)
+for element in root:
+    print('  ', element.tag)
+    for subelement in element:
+        print(' '*4, subelement.tag, ':', subelement.text)
+        
+        
+
+
+
+# Convert the data tree back into a list of dictionaries.
+example_data_read = list()
+for element in root:
+    data_row = dict()
+    for subelement in element:
+        data_row[subelement.tag] = subelement.text
+    example_data_read.append(data_row)
+    
+# Convert dates.
+for row in example_data_read:
+    row['date-of-birth'] = datetime.datetime.strptime(row['date-of-birth'],'%Y-%m-%d').date()
+
+# Compare the newly created list of dictionaries to the original data.
+print(example_data_read)
+print(example_data_read == example_data)
+
+
+# Create an XML file by converting the example data into an XML structure.
+
+# Create the root of the tree.
+example_data_xml = ET.Element('child_names')
+# Now create each subelement in turn.
+for data_row in example_data:
+    element = ET.SubElement(example_data_xml, 'child_name')
+    for key, value in data_row.items():
+        # This checks for dates and converts them into a date format.
+        if isinstance(value, (datetime.datetime, datetime.date)):
+            value = value.isoformat()
+        # Add a subelement using the key as its tag.
+        subelement = ET.SubElement(element, key)
+        # Add the value as text belonging to the sub element.
+        subelement.text = value
+
+tree = ET.ElementTree(example_data_xml)
+
+# Once created, save the XML structure with a single command.
+tree.write('example2.xml')
+
+
+# Read 'example2.xml' back into Python  using the same code as before.
+tree = ET.parse('example2.xml') # Reads in the data as a tree.
+root = tree.getroot() # Gets the first part of the tree.
+
+# Convert the XML structure into a list of (non-ordered) dictionaries.
+example_data_read = list()
+for element in root:
+    data_row = dict()
+    for subelement in element:
+        data_row[subelement.tag] = subelement.text
+    example_data_read.append(data_row)
+    
+# Convert dates.
+for row in example_data_read:
+    row['date-of-birth'] = datetime.datetime.strptime(row['date-of-birth'],'%Y-%m-%d').date()
+
+# Compare the newly created data to the original data.
+print(example_data_read)
+print(example_data_read == example_data)
+
+# Write a file 'example.xlsx' to Excel.
+pd.DataFrame(example_data).to_excel('example.xlsx', sheet_name='example', index=False)
+
+# Load the Excel file 'example.xlsx' back into Python.
+example_data_read = pd.read_excel('example.xlsx', sheet_name='example')
+
+print(example_data_read)
+print('\n')
+print('Pandas has read in the date field as type:')
+print(example_data_read['date-of-birth'].dtype)
+print('\n')
+
+# Convert the data into a Pandas Dataframe.
+example_data_pd = pd.DataFrame(example_data)
+print(example_data_pd)
+
+# Create a JSON file 'example.json'.
+
+# Define a function to create a JSON file.
+def json_dates(obj):
+    # Convert date fields to date format.
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+ 
+    # The following line deals with errors from the default routine.
+    raise TypeError ("Type %s not serializable" % type(obj))
+
+with open('example.json', 'w') as file:
+    json.dump(example_data, file, default=json_dates, indent = 2)
+
+# Read 'example.json' back into Python.
+with open('example.json', 'r') as file:
+    example_data_read = json.load(file)
+    
+# Format dates correctly
+for row in example_data_read:
+    row['date-of-birth'] = datetime.datetime.strptime(row['date-of-birth'],'%Y-%m-%d').date()
+    
+print(example_data_read)
+print(example_data_read == example_data)
+
+
+
+
