@@ -1,0 +1,779 @@
+import pandas as pd # Pandas is used for data management.
+import numpy as np # Numpy is used for mathematical operations.
+
+# Matplotlib and Seaborn are used for plotting.
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import seaborn as sns
+%matplotlib inline
+
+import os
+from google.colab import files
+
+import itertools # Used in the confusion matrix function
+
+from tensorflow import keras # Keras, from the Tensorflow package is used for
+                             # building the neural networks.
+
+# The various functions below from the Scikit-learn package help with
+# modelling and diagnostics.
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import log_loss
+from sklearn.ensemble import GradientBoostingClassifier # For building the GBM
+from sklearn.metrics import auc, roc_auc_score, confusion_matrix, f1_score
+from sklearn.inspection import plot_partial_dependence
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, BatchNormalization
+from tensorflow.keras.wrappers.scikit_learn import KerasRegressor
+
+import tensorflow as tf
+
+
+
+# Define a function to split the data into train, validation and test sets.
+# This uses the `train_test_split` function from the sklearn package to do the 
+# actual data splitting.
+def create_data_splits(dataset, id_col, response_col):
+  '''
+  Splits the data into train, validation and test sets (64%, 16%, 20%)
+  All columns on `dataset` other than the `id_col` and `response_col` will be
+  used as features.
+  Params:
+    dataset: input dataset as a pandas data frame
+    id_col: (str) the name of the column containing the unique row identifier
+    response_col: (str) the name of the response column
+  Returns:
+    train_x: the training data (feature) matrix
+    train_y: the training data response vector
+    validation_x: the validation data (feature) matrix
+    validation_y: the validation data response vector
+    test_x: the test data (feature) matrix
+    test_y: the test data response vector
+  '''
+  # Split data into train/test (80%, 20%).
+  train_full, test = train_test_split(dataset, test_size = 0.2, random_state = 123)
+
+  # Create a validation set from the training data (20%).
+  train, validation = train_test_split(train_full, test_size = 0.2, random_state = 234)
+
+  # Create train and validation data feature matrices and response vectors
+  # For the response vectors, convert Churn Yes/No to 1/0
+
+  feature_cols = [i for i in dataset.columns if i not in id_col + response_col]
+
+  train_x = train[feature_cols]
+  train_y = train[response_col].eq('Yes').mul(1)
+
+  validation_x = validation[feature_cols]
+  validation_y = validation[response_col].eq('Yes').mul(1)
+
+  test_x = test[feature_cols]
+  test_y = test[response_col].eq('Yes').mul(1)
+
+  return train_x, train_y, validation_x, validation_y, test_x, test_y
+  
+  
+  # Define a function to print and plot a confusion matrix.
+def plot_confusion_matrix(cm, classes,
+                          normalise=False,
+                          title='Confusion matrix',
+                          cmap=plt.cm.Blues):
+    '''
+    This function prints and plots a confusion matrix.
+    Normalisation of the matrix can be applied by setting `normalise=True`.
+    Normalsiation ensures that the sum of each row in the confusion matrix is 1.
+    '''
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    if normalise:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, cm[i, j],
+                 horizontalalignment='center',
+                 color='white' if cm[i, j] > thresh else 'black')
+
+    plt.tight_layout()
+    plt.ylabel('True response')
+    plt.xlabel('Predicted response')
+    
+    
+    
+files.upload()
+dataset = pd.read_csv('/content/DAA_M05_CS1_data.csv', header = 0)
+
+# Check the available features, their data types and their missingness.
+print(dataset.info())
+
+# Check the number of unique values for each feature.
+dataset.nunique()
+
+# Print out the first 5 observations in the data.
+dataset.head()
+
+# Define the ID and response columns
+id_col = ['customerID']
+response_col = ['Churn']
+
+# Get the list of features by type.
+# Categorical features can be identified as those columns with only a few levels.
+# This code selects the list of features with < 6 levels and puts the names 
+# into a list, excluding the id_col and response_col.
+cat_cols = dataset.nunique()[dataset.nunique() < 6].keys().tolist()
+cat_cols = [x for x in cat_cols if x not in id_col + response_col]
+
+# Numerical features are left after the categorical features have been removed.
+# List comprehension is used below to select the set of feature names not
+# contained in the cat_cols, id_col, or response_col lists.
+num_cols = [x for x in dataset.columns if x not in cat_cols + id_col + response_col]
+
+# Convert TotalCharges to numeric and set equal to 0 where blank.
+dataset.loc[dataset['TotalCharges'] == ' ','TotalCharges'] = 0
+dataset['TotalCharges'] = pd.to_numeric(dataset['TotalCharges'])
+
+# Check the number of levels for each categorical feature and the
+# response variable.
+for cat_col in cat_cols + response_col:
+  print(cat_col, dataset[cat_col].unique())
+  
+  
+# Plot the mean churn rate by each of the candidate features.
+
+# Loop over each feature.
+for feature in [
+    'gender',
+    'SeniorCitizen',
+    'Partner',
+    'Dependents',
+    'tenure',
+    'PhoneService',
+    'MultipleLines',
+    'InternetService',
+    'OnlineSecurity',
+    'OnlineBackup',
+    'DeviceProtection',
+    'TechSupport',
+    'StreamingTV',
+    'StreamingMovies',
+    'Contract',
+    'PaperlessBilling',
+    'PaymentMethod',
+]:
+    (
+        # create a binary 1/0 response column, where 1 indicates Churn = 'Yes';
+        # group by the values of the current feature;
+        # calculate the mean of the response; and
+        # plot.
+        dataset[[feature]]
+        .assign(Response=np.where(dataset.Churn == 'Yes', 1, 0))
+        .groupby(feature)
+        .agg('mean')
+        .plot.bar(color='Dodgerblue')
+    )
+
+
+(
+    # The same is done for MonthlyCharges except that the value is rounded
+    # to the nearest $10 using np.round(, -1).
+    dataset[['MonthlyCharges']]
+    .assign(
+        Feature_MonthlyCharges=np.round(dataset['MonthlyCharges'], -1),
+        Response=np.where(dataset.Churn == 'Yes', 1, 0),
+    )
+    .drop(columns=['MonthlyCharges'])
+    .groupby('Feature_MonthlyCharges')
+    .agg('mean')
+    .plot.bar(color='Dodgerblue')
+)
+
+
+(
+    # TotalCharges is rounded to the nearest $1,000 using np.round(, -3).
+    dataset[['TotalCharges']]
+    .assign(
+        Feature_TotalCharges=np.round(dataset['TotalCharges'], -3),
+        Response=np.where(dataset.Churn == 'Yes', 1, 0),
+    )
+    .drop(columns=['TotalCharges'])
+    .groupby('Feature_TotalCharges')
+    .agg('mean')
+    .plot.bar(color='Dodgerblue')
+)
+
+
+# One-hot encode categorical features including an indicator for NAs.
+dataset_gbm = pd.get_dummies(dataset, columns=cat_cols, dummy_na=True)
+
+# Split the data into train, valiation, and test sets.
+train_gbm_x, train_gbm_y, \
+validation_gbm_x, validation_gbm_y, \
+test_gbm_x, test_gbm_y \
+= create_data_splits(dataset_gbm, id_col, response_col)
+
+
+# Specify the GBM model.
+gbm_model = GradientBoostingClassifier(n_estimators = 1000,
+                                       learning_rate = 0.1,
+                                       validation_fraction = 0.2,
+                                       n_iter_no_change = 50,
+                                       verbose = 1,
+                                       random_state = 1234)
+# Train the model.
+# 'train_gbm_y.values.ravel()' converts the series of response values into
+# a 1D array which is the format expected by the .fit() method
+gbm_model.fit(train_gbm_x, train_gbm_y.values.ravel())
+
+
+# Score the validation dataset.
+
+# Obtain the predicted churn probabilities (Y_hat).
+# The code below returns these in an array of form ([Prob(0), Prob(1)]).
+# Keep the Prob(1) values only, i.e. the predicted churn probability (Y_hat).
+train_y_preds = gbm_model.predict_proba(train_gbm_x)[:, 1] 
+validation_y_preds = gbm_model.predict_proba(validation_gbm_x)[:, 1] 
+
+# Obtain the predicted churn outcomes, G(X).
+# Returns the predicted class as 0 for 'no churn' or 1 for 'churn'.
+train_y_class = gbm_model.predict(train_gbm_x)
+validation_y_class = gbm_model.predict(validation_gbm_x)
+
+
+# Calculate the AUC on train and validation data.
+{'train': roc_auc_score(train_gbm_y.values.ravel(), train_y_preds),
+ 'validation': roc_auc_score(validation_gbm_y.values.ravel(), validation_y_preds)}
+ 
+ 
+# Print the confusion matrix at a 50% threshold using the training data.
+conf_mat_gbm1_train = confusion_matrix(train_gbm_y, train_y_class)
+plot_confusion_matrix(conf_mat_gbm1_train, [0, 1])
+
+
+# Print the confusion matrix at a 50% threshold using the validation data.
+conf_mat_gbm1_validation = confusion_matrix(validation_gbm_y, validation_y_class)
+plot_confusion_matrix(conf_mat_gbm1_validation, [0, 1])
+
+
+# Calculate the F1 score.
+{'train': f1_score(train_gbm_y, train_y_class),
+ 'validation': f1_score(validation_gbm_y, validation_y_class)}
+ 
+ 
+ # Create a dictionary with name-importance pairs.
+gbm_feat_imps = dict()
+for feature, importance in zip(train_gbm_x.columns, gbm_model.feature_importances_):
+  gbm_feat_imps[feature] = importance
+
+# Convert to a dataframe and order by importance.
+# Note: the feature names become the index for the dataframe, and the importance 
+# is the first column (index 0).
+gbm_fi = pd.DataFrame.from_dict(gbm_feat_imps, orient = 'index').rename(columns = {0: 'Importance'})
+gbm_fi.sort_values(by = 'Importance', inplace = True)
+
+# Plot the feature importances.
+gbm_fi.plot(kind = 'barh', \
+            figsize = (12,16), \
+            title = 'Feature importance', \
+            color = 'Dodgerblue'
+)
+
+# Extract the column indices for the four most important features
+# on the training data.
+gbm_pdp_idx = [i for i in range(len(train_gbm_x.columns)) if \
+               train_gbm_x.columns[i] in gbm_fi.tail(4).index.tolist()]
+gbm_pdp_idx
+
+
+# Check that the right columns have been identified.
+train_gbm_x.columns[gbm_pdp_idx]
+
+# Produce partial dependence plots.
+# Loop over each feature rather than provide a list as this makes it
+# easier to plot the data. 
+for idx in gbm_pdp_idx:
+  plot_partial_dependence(gbm_model, train_gbm_x, features = [idx],
+                          line_kw={'color': 'Dodgerblue'})
+                          
+
+# Add additional regularisation by capping the depth of trees at 2 and
+# decreasing the learning rate for the model.
+# Increase the number of trees (n_estimators) to counter some of the effect
+# of the lower learning rate.
+gbm_model_v2 = GradientBoostingClassifier(n_estimators = 2000,
+                                          learning_rate = 0.01,
+                                          max_depth = 2,
+                                          validation_fraction = 0.2,
+                                          n_iter_no_change = 50,
+                                          verbose = 1,
+                                          random_state = 1234)
+gbm_model_v2.fit(train_gbm_x, train_gbm_y.values.ravel())
+
+
+# Score the validation dataset.
+
+# Obtain the predicted churn probabilities, Y_hat.
+validation_y_preds_v2 = gbm_model_v2.predict_proba(validation_gbm_x)[:, 1] 
+
+# Obtain the predicted churn outcomes, G(X).
+validation_y_class_v2 = gbm_model_v2.predict(validation_gbm_x)
+
+# Compare the AUC on validation data under model 1 ('old') and model 2 ('new').
+{'new':roc_auc_score(validation_gbm_y.values.ravel(), validation_y_preds_v2),
+ 'old':roc_auc_score(validation_gbm_y.values.ravel(), validation_y_preds)}
+ 
+ # Plot the confusion matrix at 50% threshold for model 2 - validation data
+conf_mat_gbm2_validation = confusion_matrix(validation_gbm_y, validation_y_class_v2)
+plot_confusion_matrix(conf_mat_gbm2_validation, [0, 1])
+
+# Plot the confusion matrix at 50% threshold for model 1 - validation data
+plot_confusion_matrix(conf_mat_gbm1_validation, [0, 1])
+
+
+# Compare the F1 score for the two models.
+{'new':f1_score(validation_gbm_y, validation_y_class_v2),
+ 'old':f1_score(validation_gbm_y, validation_y_class)}
+ 
+ # Select the final model and call it `gbm_model_final`.
+gbm_model_final = gbm_model_v2
+
+# Obtain the predicted churn probabilities, Y_hat, for the validation data.
+validation_gbm_preds_final = gbm_model_final.predict_proba(validation_gbm_x)[:, 1] 
+
+# Obtain the predicted churn outcomes, G(X) for the validation data.
+validation_gbm_class_final = gbm_model_final.predict(validation_gbm_x)
+
+# Use the get_dummies() function from the pandas package to produce the encoding.
+# The drop_first = True argument tells pandas to drop the binary indicator for 
+# the first level, so the function returns k-1 rather than k features.
+dataset_nn = pd.get_dummies(dataset, columns=cat_cols, drop_first=True)
+
+# Split the data into train, validation, and test datasets.
+train_nn_x, train_nn_y, \
+validation_nn_x, validation_nn_y, \
+test_nn_x, test_nn_y \
+= create_data_splits(dataset_nn, id_col, response_col)
+
+# Scale features to lie in [0, 1].
+scaler = MinMaxScaler()
+scaler.fit(train_nn_x)
+input = scaler.transform(train_nn_x)
+
+# Convert the response vector to a Numpy array.
+response = train_nn_y.to_numpy()
+
+# Prepare the validation and test datasets also.
+response_validation = validation_nn_y.to_numpy()
+input_validation = scaler.transform(validation_nn_x)
+response_test = test_nn_y.to_numpy()
+input_test = scaler.transform(test_nn_x)
+
+# Define the sigmoid function (to be used as the activation function).
+def sigmoid(x):
+  '''
+  Sigmoid activation function
+  Params:
+    x: a float or integer value
+  Return:
+    The value of the sigmoid function evaluated at x (float)
+  '''
+  return 1.0/(1.0+np.exp(-x))
+  
+  # Define the first derivative of the sigmoid function.
+def dsigmoid(x):
+  '''
+  Derivative of the sigmoid function evaluated at x
+  Params:
+    x: value the function will be evaluated at
+  Return:
+    The value of the function evaluated at x (float)
+  '''
+  
+  return sigmoid(x)*(1.0 - sigmoid(x))
+  
+  
+  # Define the mean-squared error loss function.
+def mse_loss(response, pred):
+  ''' 
+  Mean-squared error loss function
+  Params:
+    response: the vector of responses, Y
+    pred: the vector of predicted values, Y_hat
+  Return:
+    The MSE value (float)
+  '''
+  
+  return ((response - pred)**2).sum()/response.shape[0]
+  
+  # Define a function to provide random starting values for the weights and bias term.
+def init_params(n_p, n_h = 1, range = 0.1, start = -0.05):
+  '''
+  Randomly initializes weights and initialises biases to 0
+  Params:
+    n_p: number of features (size of input array)
+    n_h: number of neurons in layer, defaults to 1
+    range: range of random initalisation, defaults to 0.1
+    start: lowest value of random initialisation, defaults to -0.05
+  Returns:
+    a0: bias vector
+    aT: random weights vector
+  '''
+  a0 = np.zeros((1, n_h))
+  aT = np.random.rand(n_p, n_h) * range + start
+  return a0, aT
+
+
+# Set the random seed for reproducibility.
+np.random.seed(1235)
+
+# Initialise the network weights.
+# Note that the bias is initialised to zero and weights to a random value
+# uniformly in the range [-0.05, 0.05].
+# This range is set to match the default for keras (which will be tested later).
+bias, weights = init_params(n_p = train_nn_x.shape[1],
+                            n_h = 1,
+                            range = 0.1,
+                            start = -0.05)
+# Define a function to perform the forward pass over the data. This will be used
+# for training the model. Once the weights have been selected, it will also
+# serve as the prediction function.
+# The function is fairly simple. The input is a vector with dimension equal to
+# the number of features in the dataset (20). There is a single output neuron
+# and no hidden layers.
+def fwd_pass1(input, bias, weights, keep_intermediate = False):
+  '''
+  Performs the forward pass calculations for a single neuron network
+  Params:
+    input: input data frame
+    bias: bias parameter
+    weights: weights vector
+    keep_intermediate: (logical) keep the intermediate results?
+                       If True, returns the linear score in addition to the 
+                       output value y_hat after the activation function has
+                       been applied.
+  '''
+
+  # Calculate the value for the neuron on the linear scale,
+  # using the sum-product of the inputs and weights, plus the bias term
+  f = np.dot(input, weights) + bias
+
+  # Apply the activation function
+  y_hat = sigmoid(f)    # final output
+
+  if keep_intermediate:
+    return f, y_hat
+  else:
+    return y_hat
+    
+    
+    
+# Initialise the hyperparameters.
+
+# Set the learning rate - must be in (0, 1].
+learn_rate = 0.2
+
+# Set the number of training iterations.
+n_rounds = 500
+# Train the model by implementing the gradient descent algorithm over n_rounds
+# of iterations.
+for _ in range(n_rounds):
+
+  # Perform a forward propagation.
+  f, y_hat = fwd_pass1(input, bias, weights, True)
+
+
+  # Perform the back-propagation step.
+  # This involves calculating the partial derivative of the loss function
+  # with respect to the weights.
+
+  # Calculate the partial derivative of the loss function (J)
+  # with respect to the output (y_hat_i)
+  # J = (y_i - y_hat_i)^2 -> dJ/dy_hat_i = -2(y_i - y_hat_i) = 2(y_hat_i-y_i)
+  # In the calculation below, the factor of 2 is dropped as this does not
+  # impact the minimum value of the loss function.
+  dJ_dyhat = (y_hat-response)
+
+  # Calculate the partial derivate of the output (y_hat_i)
+  # with respect to the linear values of the neuron (f(X_i)).
+  # The output is simply the activation function applied to the linear values
+  # so the derivative is just the derivative of the activation function.
+  dyhat_df = dsigmoid(f)
+
+  # The partial derivative of the linear values of the neuron (f(X_i))
+  # with respect to the weights is just the inputs (X_i)
+  # because linear values (f(X_i))= a1*x1 + a2*x2 + ... 
+
+  # Calculate the gradient of the loss function, excluding the input values
+  # because these are constants.
+  # This is a useful intermediate calculation step to capture.
+  delta = dJ_dyhat*dyhat_df
+
+  # Update the weights.
+  weights_old = weights
+  weights -= learn_rate * np.dot(input.T, delta) / input.shape[0]
+
+  # Update the bias.
+  bias -= learn_rate * np.sum(delta, axis = 0) / input.shape[0]
+
+  # Print the loss calculated after every 25th iteration.
+  if np.mod(_, 25) == 0:
+    print(f'iter {_} MSE: {mse_loss(response, y_hat)}')
+    
+    
+    # Train the model by implementing the gradient descent algorithm over n_rounds
+# of iterations.
+for _ in range(n_rounds):
+
+  # Perform a forward propagation.
+  f, y_hat = fwd_pass1(input, bias, weights, True)
+
+
+  # Perform the back-propagation step.
+  # This involves calculating the partial derivative of the loss function
+  # with respect to the weights.
+
+  # Calculate the partial derivative of the loss function (J)
+  # with respect to the output (y_hat_i)
+  # J = (y_i - y_hat_i)^2 -> dJ/dy_hat_i = -2(y_i - y_hat_i) = 2(y_hat_i-y_i)
+  # In the calculation below, the factor of 2 is dropped as this does not
+  # impact the minimum value of the loss function.
+  dJ_dyhat = (y_hat-response)
+
+  # Calculate the partial derivate of the output (y_hat_i)
+  # with respect to the linear values of the neuron (f(X_i)).
+  # The output is simply the activation function applied to the linear values
+  # so the derivative is just the derivative of the activation function.
+  dyhat_df = dsigmoid(f)
+
+  # The partial derivative of the linear values of the neuron (f(X_i))
+  # with respect to the weights is just the inputs (X_i)
+  # because linear values (f(X_i))= a1*x1 + a2*x2 + ... 
+
+  # Calculate the gradient of the loss function, excluding the input values
+  # because these are constants.
+  # This is a useful intermediate calculation step to capture.
+  delta = dJ_dyhat*dyhat_df
+
+  # Update the weights.
+  weights_old = weights
+  weights -= learn_rate * np.dot(input.T, delta) / input.shape[0]
+
+  # Update the bias.
+  bias -= learn_rate * np.sum(delta, axis = 0) / input.shape[0]
+
+  # Print the loss calculated after every 25th iteration.
+  if np.mod(_, 25) == 0:
+    print(f'iter {_} MSE: {mse_loss(response, y_hat)}')
+    
+    
+    
+ # Print the training and validation AUC.
+{'train':roc_auc_score(response, pred_nn1_train),
+ 'validation':roc_auc_score(response_validation, pred_nn1_validation)}
+ 
+ # Plot the confusion matrix, with predictions converted to 
+# binary classes using a 50% threshold.
+pred_nn1_validation_class = np.where(pred_nn1_validation > 0.5, 1, 0)
+
+conf_mat_nn1_validation = confusion_matrix_new = confusion_matrix(
+    response_validation, pred_nn1_validation_class)
+plot_confusion_matrix(conf_mat_nn1_validation, [0, 1])
+
+{'GBM final':roc_auc_score(response_validation, validation_gbm_preds_final),
+ 'NN 1': roc_auc_score(response_validation, pred_nn1_validation)}
+ 
+ conf_mat_gbm_validation = confusion_matrix(validation_gbm_y, validation_gbm_class_final)
+plot_confusion_matrix(conf_mat_gbm_validation, [0, 1])
+
+
+def fwd_pass2(input, l1_bias, l1_weights, l2_bias, l2_weights, keep_intermediate = False):
+  '''
+  Performs the forward propagation calculations for a network with a single hidden layer.
+  Params:
+    input: input data
+    l1_bias: bias for layer 1 (the hidden layer)
+    l1_weights: weights for layer 1
+    l2_bias: bias for layer 2 (the output layer)
+    l2_weights: weights for layer 2
+    keep_intermediate: (logical) keep the intermediate results? 
+                       If True, returns the linear scores and activations for
+                       the hidden and output layers.
+  '''
+
+  # Calculate the neurons in layer 1 (the hidden layer).
+  f1 = np.matmul(input, l1_weights) + l1_bias # linear score
+  z1 = sigmoid(f1)                            # activation
+
+  # Output layer
+  f2 = np.dot(z1, l2_weights) + l2_bias       # linear score 
+  y_hat = sigmoid(f2)                         # activation: final output
+
+  if keep_intermediate:
+    return f1, z1, f2, y_hat
+  else:
+    return y_hat
+    
+
+# Set the learning rate - must be in (0, 1].
+learn_rate = 0.2
+
+# Set the number of training iterations.
+n_rounds = 500
+
+# Specify the desired number of neurons in the hidden layer.
+hidden_neurons = 4
+
+# Set the random seed for reproducibility.
+np.random.seed(1235)
+
+# Initialise the weights for the hidden layer.
+l1_bias, l1_weights = init_params(n_p = input.shape[1], n_h = hidden_neurons, range = 0.1, start = -0.05)
+
+# Initialise the weights for the output layer.
+l2_bias, l2_weights = init_params(n_p = l1_weights.shape[1], n_h = 1, range = 0.1, start = -0.05)
+
+
+for _ in range(n_rounds):
+
+  '''
+  The model is trained by first performing a forward pass to get the predictions,
+  followed by a backward pass to 'propagate' the loss back through each of the
+  neurons.
+  This is repeated each iteration until the network has converged or 
+  the maximum number of rounds has been reached.
+
+  The following notation is used in this function: 
+    ln_weights: the weights matrix (one column per neuron) for layer n
+    ln_bias: vector of bias values (one per neuron) for layer n
+    fn: vector of linear scores (one per neuron) for layer n
+    zn: vector of activations (one per neuron) for layer n
+  '''
+
+  # Perform the forward pass.
+  f1, z1, f2, y_hat = fwd_pass2(input, l1_bias, l1_weights, l2_bias, l2_weights, True)
+
+  # Perform the backpropagation step.
+  # Perform the intermediate calculations for the loss function gradients.
+  delta2 = (y_hat - response) * dsigmoid(f2)        
+  delta1 = np.dot(delta2, l2_weights.T) * dsigmoid(f1)
+
+  dloss_dweight2 = np.dot(z1.T, delta2)/input.shape[0]
+    # Gradient with respect to the layer 2 weights.
+  dloss_dweight1 = np.matmul(input.T, delta1)/input.shape[0]
+    # Gradient with respect to the layer 1 weights.
+
+  # Update the weights.
+  l2_weights -= learn_rate * dloss_dweight2
+  l1_weights -= learn_rate * dloss_dweight1
+
+  # Update the bias terms.
+  l2_bias -= learn_rate * np.sum(delta2, axis = 0) / input.shape[0]
+  l1_bias -= learn_rate * np.sum(delta1, axis = 0) / input.shape[0]
+
+  # Print the loss after every 25th iteration.
+  if np.mod(_, 25) == 0:
+    print('iter', _, ':', mse_loss(response, y_hat))
+    
+    
+    
+pred_nn2_train = fwd_pass2(input, l1_bias, l1_weights, l2_bias, l2_weights, False)
+pred_nn2_validation = fwd_pass2(input_validation, l1_bias, l1_weights, l2_bias, l2_weights, False)
+
+
+pred_nn2_train = fwd_pass2(input, l1_bias, l1_weights, l2_bias, l2_weights, False)
+pred_nn2_validation = fwd_pass2(input_validation, l1_bias, l1_weights, l2_bias, l2_weights, False)
+ 
+
+# Compare NN 2 to GBM final and NN 1
+{'1. NN 2':roc_auc_score(response_validation, pred_nn2_validation),
+ '2. NN 1':roc_auc_score(response_validation, pred_nn1_validation),
+ '3. GBM final': roc_auc_score(response_validation, validation_gbm_preds_final)}
+ 
+ 
+ # Set the seed for the random number generator, for reproducibility of the results.
+np.random.seed(1235)
+
+# Build a model with 1 (dense) hidden layer, 4 neurons and
+# a sigmoid activation function.
+model = Sequential()
+model.add(Dense(4, input_dim = input.shape[1], activation = 'sigmoid', kernel_initializer = 'random_uniform'))
+model.add(Dense(1, activation = 'sigmoid', kernel_initializer = 'random_uniform'))
+
+# Specify the optimiser to use.
+opt = keras.optimizers.SGD(learning_rate=0.2, momentum=0.0)
+
+# Compile the model using the mean-squared error loss function.
+model.compile(
+    loss = 'mse',
+    metrics = ['mse'],
+    optimizer = opt    
+)
+
+# Train the model.
+model.fit(input, 
+          response, 
+          epochs = 500, 
+          batch_size = input.shape[0],
+          steps_per_epoch = 1, 
+          verbose = 2)
+          
+          
+# Obtain the predictions on the training and validation data.
+keras_train_preds = model.predict(input)
+keras_validation_preds = model.predict(input_validation)
+
+
+# Calculate the AUC on the training and validation data.
+{'train':roc_auc_score(response, keras_train_preds), 'validation':roc_auc_score(response_validation, keras_validation_preds)}
+
+
+  # Compare the AUCs under all models built to date.
+{'1. NN 3': roc_auc_score(response_validation, keras_validation_preds),
+ '2. NN 2': roc_auc_score(response_validation, pred_nn2_validation),
+ '3. NN 1': roc_auc_score(response_validation, pred_nn1_validation),
+ '4. GBM final': roc_auc_score(response_validation, validation_gbm_preds_final)}
+ 
+ 
+np.random.seed(1235)
+
+# Construct the adjusted neural network model.
+model2 = Sequential()
+model2.add(Dense(8, input_dim= input.shape[1], activation='relu', kernel_regularizer='l2'))
+model2.add(Dense(8, activation='relu', kernel_regularizer='l2'))
+model2.add(Dense(1, activation='sigmoid'))
+# Compile the model using the Adam optimiser and the logistic loss function
+# for a binary classifier (binary_cross_entropy).
+model2.compile(
+    loss='binary_crossentropy',
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+    metrics=['binary_crossentropy'],
+)
+model2.fit(input, response, epochs=100, batch_size=1000)
+
+# Obtain the predictions on the training and validation data.
+keras2_train_preds = model2.predict(input)
+keras2_validation_preds = model2.predict(input_validation)
+
+# Calculate the AUC on the training and validation data.
+{'train':roc_auc_score(response, keras2_train_preds), 'validation':roc_auc_score(response_validation, keras2_validation_preds)}
+
+# Calculate the relative improvement in AUC between NN 4 and NN 3
+# using the validation data.
+roc_auc_score(response_validation, keras2_validation_preds) / roc_auc_score(response_validation, keras_validation_preds)
+
+# Compare the results of all five models built in this notebook.
+{'1. NN 4 (Keras2)': roc_auc_score(response_validation, keras2_validation_preds),
+ '2. NN 3 (Keras1)': roc_auc_score(response_validation, keras_validation_preds),
+ '3. NN 2': roc_auc_score(response_validation, pred_nn2_validation),
+ '4. NN 1': roc_auc_score(response_validation, pred_nn1_validation),
+ '5. GBM final': roc_auc_score(response_validation, validation_gbm_preds_final)}
+ 
+ 
+
+
